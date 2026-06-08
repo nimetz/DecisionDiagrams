@@ -1310,6 +1310,69 @@ namespace DecisionDiagrams
         }
 
         /// <summary>
+        /// Find all Satisfying assignments of a bdd.
+        /// Returns null if the function is "false".
+        /// </summary>
+        /// <param name="value">The function.</param>
+        /// <param name="variables">The variables to find assignments for. By default gets all variables.</param>
+        /// <returns>The satisfying assignments.</returns>
+        public List<Assignment<T>> SatAll(DD value, List<Variable<T>> variables = null)
+        {
+            if (value.IsFalse())
+            {
+                return null;
+            }
+
+            if (variables == null)
+            {
+                variables = this.variables;
+            }
+            List<Assignment<T>> assignments = new List<Assignment<T>>();
+            var mapsList = this.SatAllInt(value, variables);
+            foreach (var maps in mapsList)
+            {
+                Assignment<T> assignment = new Assignment<T>();
+                foreach (Variable<T> var in variables)
+                {
+                    switch (var.Type)
+                    {
+                        case Variable<T>.VariableType.BOOL:
+                            if (maps.Item1.ContainsKey(var) == false)
+                            {
+                                break;
+                            }
+                            assignment.BoolAssignment.Add((VarBool<T>)var, maps.Item1[var] == 1 ? true : false);
+                            break;
+
+                        case Variable<T>.VariableType.INT8:
+                            assignment.Int8Assignment.Add((VarInt8<T>)var, (byte)maps.Item1[var]);
+                            break;
+
+                        case Variable<T>.VariableType.INT16:
+                            assignment.Int16Assignment.Add((VarInt16<T>)var, (short)maps.Item1[var]);
+                            break;
+
+                        case Variable<T>.VariableType.INT32:
+                            assignment.Int32Assignment.Add((VarInt32<T>)var, (int)maps.Item1[var]);
+                            break;
+
+                        case Variable<T>.VariableType.INT64:
+                            assignment.Int64Assignment.Add((VarInt64<T>)var, maps.Item1[var]);
+                            break;
+
+                        case Variable<T>.VariableType.INT:
+                            VarInt<T> v = (VarInt<T>)var;
+                            assignment.IntAssignment.Add(v, maps.Item2[v]);
+                            break;
+                    }
+                }
+
+                assignments.Add(assignment);
+            }
+            return assignments;
+        }
+
+        /// <summary>
         /// Find a satisfying assignment for a function.
         /// Returns null if the function is "false".
         /// </summary>
@@ -1335,6 +1398,10 @@ namespace DecisionDiagrams
                 switch (var.Type)
                 {
                     case Variable<T>.VariableType.BOOL:
+                        if (maps.Item1.ContainsKey(var) == false)
+                        {
+                            break;
+                        }
                         assignment.BoolAssignment.Add((VarBool<T>)var, maps.Item1[var] == 1 ? true : false);
                         break;
 
@@ -1778,6 +1845,19 @@ namespace DecisionDiagrams
         }
 
         /// <summary>
+        /// Find a satisfying assignment for a function.
+        /// "Don't care" variable will be abset from the result.
+        /// </summary>
+        /// <param name="value">The function.</param>
+        /// <returns>Assignment of variables to values.</returns>
+        internal List<Dictionary<int, bool>> SatAll(DDIndex value)
+        {
+            var initResult = new Dictionary<int, bool>();
+            var results = this.SatAll(value, true, initResult);
+            return results;
+        }
+
+        /// <summary>
         /// Convert a BitOrder to a function on indices.
         /// </summary>
         /// <param name="len">The bitwidth.</param>
@@ -2137,9 +2217,14 @@ namespace DecisionDiagrams
                 switch (var.Type)
                 {
                     case Variable<T>.VariableType.BOOL:
+                        if (!bitValues.ContainsKey(var.Indices[0])) {
+                            continue;
+                        }
+                        else {
                         bool b = bitValues.ContainsKey(var.Indices[0]) && bitValues[var.Indices[0]];
                         ret.Add(var, b ? 1 : 0);
                         continue;
+                        }
 
                     case Variable<T>.VariableType.INT8:
                     case Variable<T>.VariableType.INT16:
@@ -2185,6 +2270,95 @@ namespace DecisionDiagrams
         }
 
         /// <summary>
+        /// Find all satisfying assignments for a function and
+        /// create results with the appropriate type.
+        /// </summary>
+        /// <param name="value">The function.</param>
+        /// <param name="variables">The variables to find an assignment for.</param>
+        /// <returns>The satisfying assignment.</returns>
+        private List<ValueTuple<Dictionary<Variable<T>, long>, Dictionary<VarInt<T>, byte[]>>> SatAllInt(DD value, List<Variable<T>> variables)
+        {
+            this.Check(value.ManagerId);
+
+            // get the per-bit assignment
+            var bitValuesList = this.SatAll(value.Index);
+            // Console.WriteLine("[DD] SatAllInt found {0} assignments", bitValuesList.Count);
+            var results = new List<ValueTuple<Dictionary<Variable<T>, long>, Dictionary<VarInt<T>, byte[]>>>();
+
+            foreach (var bitValues in bitValuesList)
+            {
+                // convert into values based on user-allocated variables
+                var ret = new Dictionary<Variable<T>, long>();
+                var retInt = new Dictionary<VarInt<T>, byte[]>();
+                // Console.WriteLine("[DD] new assignment.");
+
+                foreach (Variable<T> var in variables)
+                {
+                    Check(var.Manager.Uid);
+
+                    var len = var.Indices.Length;
+
+                    switch (var.Type)
+                    {
+                        case Variable<T>.VariableType.BOOL:
+                            if (!bitValues.ContainsKey(var.Indices[0]))
+                            {
+                                continue;
+                            }
+                            else
+                            {
+                                bool b = bitValues[var.Indices[0]];
+                                // Console.Write("[DD] SatAllInt var {0} = {1}\n", var.Indices[0], b);
+                                ret.Add(var, b ? 1 : 0);
+                                continue;
+                            }
+
+                        case Variable<T>.VariableType.INT8:
+                        case Variable<T>.VariableType.INT16:
+                        case Variable<T>.VariableType.INT32:
+                        case Variable<T>.VariableType.INT64:
+                            long x = 0;
+                            for (int i = 0; i < len; i++)
+                            {
+                                var key = var.Indices[i];
+                                if (bitValues.ContainsKey(key) && bitValues[key])
+                                {
+                                    var bitPos = var.GetBitPositionForVariableIndex(key);
+                                    var shift = len - 1 - bitPos;
+                                    x |= (1L << shift);
+                                }
+                            }
+
+                            ret.Add(var, x);
+                            break;
+
+                        case Variable<T>.VariableType.INT:
+                            var alloc = len % 8 == 0 ? (len / 8) : ((len / 8) + 1);
+                            var bytes = new byte[alloc];
+                            for (int i = 0; i < len; i++)
+                            {
+                                var key = var.Indices[i];
+                                if (bitValues.ContainsKey(key) && bitValues[key])
+                                {
+                                    var bitPos = var.GetBitPositionForVariableIndex(key);
+                                    var whichByte = bitPos / 8;
+                                    var whichIndex = bitPos % 8;
+                                    var shift = 7 - whichIndex;
+                                    bytes[whichByte] |= (byte)(1 << shift);
+                                }
+                            }
+
+                            retInt.Add((VarInt<T>)var, bytes);
+                            break;
+                    }
+                }
+
+                results.Add((ret, retInt));
+            }
+
+            return results;
+        }
+        /// <summary>
         /// Find a satisfying assignment for the function.
         /// </summary>
         /// <param name="value">The function.</param>
@@ -2209,6 +2383,58 @@ namespace DecisionDiagrams
 
             this.factory.Sat(node, true, result);
             this.Sat(node.High, lookingFor, result);
+        }
+
+        /// <summary>
+        /// Find all satisfying (minimal) assignment for the function.
+        /// </summary>
+        /// <param name="value">The function.</param>
+        /// <param name="lookingFor">What terminal we are looking for.</param>
+        /// <param name="result">Mapping from variable index to value.</param>
+        private List<Dictionary<int, bool>> SatAll(DDIndex value, bool lookingFor, Dictionary<int, bool> result)
+        {
+            if (value.IsConstant())
+            {
+                return new List<Dictionary<int, bool>> { result };
+            }
+            var results = new List<Dictionary<int, bool>>();
+
+            var node = this.MemoryPool[value.GetPosition()];
+            lookingFor = value.IsComplemented() ? !lookingFor : lookingFor;
+            var goLeft = (lookingFor && !node.Low.IsZero()) || (!lookingFor && !node.Low.IsOne());
+            var goRight = (lookingFor && !node.High.IsZero()) || (!lookingFor && !node.High.IsOne());
+            if (goLeft & !goRight)
+            {
+                // Console.WriteLine("[DD] SatAll going left at variable {0}", node.Variable);
+                factory.Sat(node, false, result);
+                var leftResults = SatAll(node.Low, lookingFor, result);
+                results.AddRange(leftResults);
+            }
+            if (goRight & !goLeft)
+            {
+                // Console.WriteLine("[DD] SatAll going right at variable {0}", node.Variable);
+                factory.Sat(node, true, result);
+                var rightResults = SatAll(node.High, lookingFor, result);
+                results.AddRange(rightResults);
+            }
+            if (goRight & goLeft)
+            {
+                // Console.WriteLine("[DD] Warning: SatAll found multiple branches at variable {0}", node.Variable);
+                // Console.WriteLine("[DD] node.High: {0}", this.Display(node.High));
+                // Console.WriteLine("[DD] node.Low: {0}", this.Display(node.Low));
+                var leftResult = new Dictionary<int, bool>(result);
+                factory.Sat(node, false, leftResult);
+                var leftResults = SatAll(node.Low, lookingFor, leftResult);
+
+                var rightResult = new Dictionary<int, bool>(result);
+                factory.Sat(node, true, rightResult);
+                var rightResults = SatAll(node.High, lookingFor, rightResult);
+                // Console.WriteLine("[DD] SatAll left results count: {0}", leftResults.Count);
+                // Console.WriteLine("[DD] SatAll right results count: {0}", rightResults.Count);
+                results.AddRange(leftResults);
+                results.AddRange(rightResults);
+            }
+            return results;
         }
 
         /// <summary>

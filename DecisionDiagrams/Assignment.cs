@@ -135,5 +135,15 @@ namespace DecisionDiagrams
 
             return this.IntAssignment[var];
         }
+
+        /// <summary>
+        /// True iff assignment contains key for var.
+        /// </summary>
+        /// <param name="var">The variable.</param>
+        /// <returns>An integer value.</returns>
+        public bool Contains(VarBool<T> var)
+        {
+            return this.BoolAssignment.ContainsKey(var);
+        }
     }
 }
